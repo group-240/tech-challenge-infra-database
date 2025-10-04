@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "Região da AWS"
+  description = "Região da AWS - fixo em us-east-1"
   type        = string
   default     = "us-east-1"
 }
@@ -17,14 +17,14 @@ variable "db_name" {
 }
 
 variable "db_username" {
-  description = "Usuário master do banco de dados"
+  description = "Username para o banco de dados"
   type        = string
   default     = "postgres"
 }
 
 variable "db_password" {
-  description = "Senha do banco de dados"
+  description = "Password para o banco de dados RDS - HARDCODED para ambiente DEV (apenas estudo)"
   type        = string
   sensitive   = true
-  default     = "TechChallenge2025!"
+  default     = "DevPassword123!"
 }

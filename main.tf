@@ -1,6 +1,7 @@
 # ------------------------------------------------------------------
 # Arquivo: main.tf
-# Descrição: Ponto de entrada principal do Terraform para o banco de dados.
+# Descrição: Infraestrutura de banco de dados RDS PostgreSQL
+# Depende de: tech-challenge-infra-core
 # ------------------------------------------------------------------
 
 terraform {
@@ -10,207 +11,155 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket         = "tech-challenge-tfstate-533267363894-4"
+    key            = "database/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "tech-challenge-terraform-lock-533267363894-4"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
   region = var.aws_region
 }
 
-# -------------------------------
-# VPC
-# -------------------------------
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = {
-    Name = "${var.project_name}-vpc"
+# ------------------------------------------------------------------
+# Remote State: Importar outputs do infra-core
+# ------------------------------------------------------------------
+data "terraform_remote_state" "core" {
+  backend = "s3"
+  config = {
+    bucket = "tech-challenge-tfstate-533267363894-4"
+    key    = "core/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
-# -------------------------------
-# Subnets
-# -------------------------------
-resource "aws_subnet" "public_1" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.0.0/24"
-  availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "${var.project_name}-public-subnet-1"
-  }
-}
-
-resource "aws_subnet" "private_1" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "${var.aws_region}a"
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "${var.project_name}-private-subnet-1"
-  }
-}
-
-resource "aws_subnet" "private_2" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.2.0/24"
-  availability_zone       = "${var.aws_region}b"
-  map_public_ip_on_launch = false
-
-  tags = {
-    Name = "${var.project_name}-private-subnet-2"
-  }
-}
-
-# -------------------------------
-# Internet Gateway + Rota pública
-# -------------------------------
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
-
-  tags = {
-    Name = "${var.project_name}-igw"
-  }
-}
-
-resource "aws_route_table" "public_rt" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-
-  tags = {
-    Name = "${var.project_name}-public-rt"
-  }
-}
-
-resource "aws_route_table_association" "public_assoc" {
-  subnet_id      = aws_subnet.public_1.id
-  route_table_id = aws_route_table.public_rt.id
-}
-
-# -------------------------------
-# NAT Gateway + Rota privada
-# -------------------------------
-resource "aws_eip" "nat_eip" {
-  domain = "vpc"
-
-  tags = {
-    Name = "${var.project_name}-nat-eip"
-  }
-}
-
-resource "aws_nat_gateway" "nat" {
-  allocation_id = aws_eip.nat_eip.id
-  subnet_id     = aws_subnet.public_1.id
-
-  tags = {
-    Name = "${var.project_name}-nat-gw"
-  }
-}
-
-resource "aws_route_table" "private_rt" {
-  vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat.id
-  }
-
-  tags = {
-    Name = "${var.project_name}-private-rt"
-  }
-}
-
-resource "aws_route_table_association" "private_assoc_1" {
-  subnet_id      = aws_subnet.private_1.id
-  route_table_id = aws_route_table.private_rt.id
-}
-
-resource "aws_route_table_association" "private_assoc_2" {
-  subnet_id      = aws_subnet.private_2.id
-  route_table_id = aws_route_table.private_rt.id
-}
-
-# -------------------------------
-# Security Group
-# -------------------------------
+# ------------------------------------------------------------------
+# Security Group para RDS (restrito à VPC)
+# ------------------------------------------------------------------
 resource "aws_security_group" "rds_sg" {
   name        = "${var.project_name}-rds-sg"
-  description = "Permite acesso ao RDS"
-  vpc_id      = aws_vpc.main.id
+  description = "Security group para RDS PostgreSQL"
+  vpc_id      = data.terraform_remote_state.core.outputs.vpc_id
 
+  # Permitir acesso PostgreSQL APENAS de dentro da VPC
   ingress {
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # cuidado: abre para o mundo
+    cidr_blocks = [data.terraform_remote_state.core.outputs.vpc_cidr_block]
+    description = "PostgreSQL access from VPC"
   }
 
+  # Permitir todo tráfego de saída
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
   }
 
   tags = {
-    Name = "${var.project_name}-rds-sg"
+    Name        = "${var.project_name}-rds-sg"
+    ManagedBy   = "terraform"
+    Environment = "dev"
   }
 }
 
-# -------------------------------
-# Subnet Group
-# -------------------------------
+# ------------------------------------------------------------------
+# DB Subnet Group (usando subnets privadas do core)
+# ------------------------------------------------------------------
 resource "aws_db_subnet_group" "rds_subnet_group" {
-  name       = "${var.project_name}-rds-subnet-group-v4"
-  subnet_ids = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+  name       = "${var.project_name}-rds-subnet-group"
+  subnet_ids = data.terraform_remote_state.core.outputs.private_subnet_ids
 
   tags = {
-    Name = "${var.project_name}-rds-subnet-group"
+    Name        = "${var.project_name}-rds-subnet-group"
+    ManagedBy   = "terraform"
+    Environment = "dev"
   }
 }
 
-# -------------------------------
-# RDS PostgreSQL
-# -------------------------------
+# ------------------------------------------------------------------
+# RDS PostgreSQL Instance
+# ------------------------------------------------------------------
 resource "aws_db_instance" "main" {
-  identifier             = "${var.project_name}-db"
-  engine                 = "postgres"
-  engine_version         = "14.12"
-  instance_class         = "db.t3.micro"
-  allocated_storage      = 20
+  identifier = "${var.project_name}-db"
+  
+  # Engine
+  engine         = "postgres"
+  engine_version = "14.12"
+  instance_class = "db.t3.micro"
+  
+  # Storage
+  allocated_storage     = 20
+  max_allocated_storage = 100
+  storage_type          = "gp3"
+  storage_encrypted     = true
 
-  db_name                = var.db_name
-  username               = var.db_username
-  password               = var.db_password
+  # Database
+  db_name  = var.db_name
+  username = var.db_username
+  password = var.db_password
 
+  # Network
   db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  publicly_accessible    = false  # PRIVADO - apenas dentro da VPC
 
-  skip_final_snapshot      = true
-  publicly_accessible      = true   # <-- conexão externa
-  backup_retention_period  = 7
+  # Backup
+  backup_retention_period = 7
+  backup_window          = "03:00-04:00"
+  maintenance_window     = "mon:04:00-mon:05:00"
+  
+  # Snapshots
+  skip_final_snapshot       = true
+  final_snapshot_identifier = "${var.project_name}-db-final-snapshot"
+  copy_tags_to_snapshot     = true
+
+  # CloudWatch Logs
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+  
+  # Proteção
+  deletion_protection = false  # Dev environment
 
   tags = {
-    Name = "${var.project_name}-db"
+    Name        = "${var.project_name}-db"
+    ManagedBy   = "terraform"
+    Environment = "dev"
+  }
+
+  depends_on = [
+    aws_db_subnet_group.rds_subnet_group,
+    aws_security_group.rds_sg,
+    aws_cloudwatch_log_group.rds_postgresql,
+    aws_cloudwatch_log_group.rds_upgrade
+  ]
+}
+
+# CloudWatch Log Groups para RDS (1 dia para custo mínimo)
+resource "aws_cloudwatch_log_group" "rds_postgresql" {
+  name              = "/aws/rds/instance/${var.project_name}-db/postgresql"
+  retention_in_days = 1
+
+  tags = {
+    Name        = "${var.project_name}-rds-postgresql-logs"
+    ManagedBy   = "terraform"
+    Environment = "dev"
   }
 }
 
-# -------------------------------
-# Outputs
-# -------------------------------
-output "rds_endpoint" {
-  description = "RDS instance endpoint"
-  value       = aws_db_instance.main.endpoint
-}
+resource "aws_cloudwatch_log_group" "rds_upgrade" {
+  name              = "/aws/rds/instance/${var.project_name}-db/upgrade"
+  retention_in_days = 1
 
-output "rds_port" {
-  description = "RDS instance port"
-  value       = aws_db_instance.main.port
+  tags = {
+    Name        = "${var.project_name}-rds-upgrade-logs"
+    ManagedBy   = "terraform"
+    Environment = "dev"
+  }
 }
