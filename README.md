@@ -9,6 +9,7 @@ Terraform para RDS PostgreSQL com deploy automático via **GitHub Actions**.
 - **Security Group** restringindo acesso à VPC
 - **Backups automáticos** com retenção de 7 dias
 
+
 ## 🚀 Deploy Automático
 
 ### GitHub Secrets Necessários
@@ -56,9 +57,9 @@ DB_PASSWORD=MinhaSenh@123!
 
 ```
 .
-├── main.tf                     # RDS PostgreSQL
-├── variables.tf                # Variáveis de entrada
-└── .github/workflows/          # Pipeline CI/CD
+├── main.tf            # RDS PostgreSQL
+├── variables.tf       # Variáveis de entrada
+└── .github/workflows/ # Pipeline CI/CD
     └── main.yml
 ```
 
