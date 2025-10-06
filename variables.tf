@@ -26,5 +26,5 @@ variable "db_password" {
   description = "Password para o banco de dados RDS - HARDCODED para ambiente DEV (apenas estudo)"
   type        = string
   sensitive   = true
-  default     = "DevPassword123"  # 8-30 chars, letras e números (RDS PostgreSQL não aceita alguns especiais)
+  default     = "TechChallenge2024Pass"
 }
