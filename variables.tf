@@ -26,5 +26,5 @@ variable "db_password" {
   description = "Password para o banco de dados RDS - HARDCODED para ambiente DEV (apenas estudo)"
   type        = string
   sensitive   = true
-  default     = "Tech-Challenge-2024"
+  default     = "DevEnvironment2024!"
 }
