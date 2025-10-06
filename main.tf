@@ -16,7 +16,7 @@ terraform {
     bucket         = "tech-challenge-tfstate-533267363894-4"
     key            = "database/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "tech-challenge-terraform-lock-533267363894-4"
+    dynamodb_table = "tech-challenge-terraform-lock-533267363894"
     encrypt        = true
   }
 }
