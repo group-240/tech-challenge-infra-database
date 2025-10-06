@@ -28,6 +28,17 @@ resource "aws_security_group" "rds_sg" {
   }
 }
 
+# Security Group Rule: Permitir EKS Cluster acessar RDS
+resource "aws_security_group_rule" "rds_from_eks_cluster" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds_sg.id
+  source_security_group_id = data.terraform_remote_state.core.outputs.eks_cluster_security_group_id
+  description              = "Allow PostgreSQL access from EKS Cluster"
+}
+
 # ------------------------------------------------------------------
 # DB Subnet Group (usando subnets privadas do core)
 # ------------------------------------------------------------------
