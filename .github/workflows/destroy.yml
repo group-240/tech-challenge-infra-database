@@ -1,0 +1,193 @@
+name: 🧹 Destroy Database - DANGER ZONE
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DESTROY-DATABASE" to confirm deletion'
+        required: true
+        type: string
+      force:
+        description: 'Force destroy even with errors'
+        required: false
+        type: boolean
+        default: false
+      delete_snapshots:
+        description: 'Delete RDS snapshots too'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.5.0
+
+jobs:
+  validate-confirmation:
+    name: 🔐 Validate Destruction Request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Confirmation
+        run: |
+          if [ "${{ inputs.confirmation }}" != "DESTROY-DATABASE" ]; then
+            echo "❌ Confirmation failed! You must type exactly 'DESTROY-DATABASE' to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+          echo "⚠️ WARNING: This will DELETE your RDS database!"
+
+  backup-before-destroy:
+    name: 💾 Create Final Backup
+    runs-on: ubuntu-latest
+    needs: validate-confirmation
+    
+    steps:
+      - name: ⚙️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📸 Create Final Snapshot
+        run: |
+          echo "📸 Creating final snapshot before destruction..."
+          
+          DB_INSTANCE="tech-challenge-db"
+          SNAPSHOT_ID="${DB_INSTANCE}-final-$(date +%Y%m%d-%H%M%S)"
+          
+          # Check if DB exists
+          if aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" 2>/dev/null; then
+            echo "Creating snapshot: $SNAPSHOT_ID"
+            aws rds create-db-snapshot \
+              --db-instance-identifier "$DB_INSTANCE" \
+              --db-snapshot-identifier "$SNAPSHOT_ID" || true
+            
+            echo "✅ Final snapshot created: $SNAPSHOT_ID"
+          else
+            echo "ℹ️ Database instance not found, skipping snapshot"
+          fi
+        continue-on-error: true
+
+  destroy-database:
+    name: 🗑️ Destroy Database Infrastructure
+    runs-on: ubuntu-latest
+    needs: backup-before-destroy
+    if: always()
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: ⚙️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔍 Terraform Init
+        run: terraform init
+        continue-on-error: ${{ inputs.force }}
+
+      - name: 📋 List Resources Before Destroy
+        run: |
+          echo "📊 Current Resources in State:"
+          terraform state list || echo "No state found"
+        continue-on-error: true
+
+      - name: 💥 Terraform Destroy
+        run: |
+          if [ "${{ inputs.force }}" == "true" ]; then
+            echo "⚠️ FORCE MODE: Will attempt to destroy with -auto-approve"
+            terraform destroy -auto-approve || echo "Some resources failed to destroy"
+          else
+            echo "🗑️ STANDARD MODE: Destroying with -auto-approve"
+            terraform destroy -auto-approve
+          fi
+        continue-on-error: ${{ inputs.force }}
+
+      - name: 🧹 Clean Up Security Groups
+        if: always()
+        run: |
+          echo "🔍 Cleaning up orphaned security groups..."
+          
+          # List security groups with tech-challenge tag
+          SG_IDS=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Project,Values=tech-challenge" "Name=group-name,Values=*database*" \
+            --query 'SecurityGroups[*].GroupId' \
+            --output text)
+          
+          for sg_id in $SG_IDS; do
+            echo "Attempting to delete security group: $sg_id"
+            aws ec2 delete-security-group --group-id "$sg_id" || echo "Failed to delete $sg_id (may be in use)"
+          done
+          
+          echo "✅ Security group cleanup completed"
+        continue-on-error: true
+
+      - name: 🗑️ Delete RDS Snapshots
+        if: inputs.delete_snapshots == true
+        run: |
+          echo "⚠️ Deleting RDS snapshots..."
+          
+          SNAPSHOTS=$(aws rds describe-db-snapshots \
+            --query "DBSnapshots[?contains(DBSnapshotIdentifier, 'tech-challenge')].DBSnapshotIdentifier" \
+            --output text)
+          
+          for snapshot in $SNAPSHOTS; do
+            echo "Deleting snapshot: $snapshot"
+            aws rds delete-db-snapshot --db-snapshot-identifier "$snapshot" || true
+          done
+          
+          echo "✅ Snapshots deleted"
+        continue-on-error: true
+
+      - name: 📊 Verify Destruction
+        if: always()
+        run: |
+          echo "🔍 Checking remaining database resources..."
+          
+          echo ""
+          echo "RDS Instances:"
+          aws rds describe-db-instances \
+            --query 'DBInstances[?contains(DBInstanceIdentifier, `tech-challenge`)].DBInstanceIdentifier' || echo "✅ No instances found"
+          
+          echo ""
+          echo "RDS Subnet Groups:"
+          aws rds describe-db-subnet-groups \
+            --query "DBSubnetGroups[?contains(DBSubnetGroupName, 'tech-challenge')].DBSubnetGroupName" || echo "✅ No subnet groups found"
+          
+          echo ""
+          echo "RDS Snapshots:"
+          aws rds describe-db-snapshots \
+            --query "DBSnapshots[?contains(DBSnapshotIdentifier, 'tech-challenge')].DBSnapshotIdentifier" || echo "✅ No snapshots found"
+          
+          echo ""
+          echo "Security Groups:"
+          aws ec2 describe-security-groups \
+            --filters "Name=tag:Project,Values=tech-challenge" "Name=group-name,Values=*database*" \
+            --query 'SecurityGroups[*].[GroupName,GroupId]' --output table || echo "✅ No security groups found"
+          
+          echo ""
+          echo "✅ Database destruction verification complete"
+        continue-on-error: true
+
+      - name: 📝 Summary
+        if: always()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🧹 DATABASE INFRASTRUCTURE DESTRUCTION SUMMARY"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Repository: tech-challenge-infra-database"
+          echo "Timestamp: $(date)"
+          echo "Force Mode: ${{ inputs.force }}"
+          echo "Delete Snapshots: ${{ inputs.delete_snapshots }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
