@@ -26,5 +26,5 @@ variable "db_password" {
   description = "Password para o banco de dados RDS - HARDCODED para ambiente DEV (apenas estudo)"
   type        = string
   sensitive   = true
-  default     = "DevPassword123"
+  default     = "DevPassword123!"  # Mínimo 8 chars com pelo menos 1 caractere especial
 }
