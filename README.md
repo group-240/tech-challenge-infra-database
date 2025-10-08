@@ -9,7 +9,6 @@ Terraform para RDS PostgreSQL com deploy automático via **GitHub Actions**.
 - **Security Group** restringindo acesso à VPC
 - **Backups automáticos** com retenção de 7 dias
 
-
 ## 🚀 Deploy Automático
 
 ### GitHub Secrets Necessários
