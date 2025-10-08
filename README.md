@@ -11,7 +11,6 @@ Terraform para RDS PostgreSQL com deploy automático via **GitHub Actions**.
 
 ## 🚀 Deploy Automático
 
-
 ### GitHub Secrets Necessários
 
 ```bash
@@ -32,7 +31,7 @@ DB_PASSWORD=MinhaSenh@123!
 # .github/workflows/main.yml
 - name: Terraform Apply
   run: |
-    terraform init
+    terraform init!
     terraform plan -var="db_password=${{ secrets.DB_PASSWORD }}"
     terraform apply -auto-approve
 ```
