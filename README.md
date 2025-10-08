@@ -56,7 +56,6 @@ DB_PASSWORD=MinhaSenh@123!
 ## 📁 Estrutura
 
 ```
-.
 ├── main.tf            # RDS PostgreSQL
 ├── variables.tf       # Variáveis de entrada
 └── .github/workflows/ # Pipeline CI/CD
